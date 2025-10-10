@@ -273,6 +273,22 @@ class Attention(nn.Module):
         q, k, v = qkv.reshape(3, B * self.num_heads, H * W, -1).unbind(0)
         ########################################################################
         # Fill in the code here
+
+        #apply transpose but only on last two layers
+        k_transpose = k.reshape(-2, -1) 
+        #the vector size for each pixel/head
+        d_k = q.shape[-1] 
+
+        #calculate vector similarity between key and query.
+        similarity = q @ k_transpose
+        #normalize and softmax (dim=-1 means it's along each C vector)
+        similarity = (similarity / d_k).softmax(dim=-1)
+
+        #calculate attn
+        attn = similarity @ v
+        
+        #reshape into an output form
+        x = attn.reshape(B*self.num_heads, H*W, -1)
         ########################################################################
         return x
 
@@ -328,12 +344,37 @@ class TransformerBlock(nn.Module):
         ########################################################################
         # The implementation shall support local self-attention
         # (also known as window attention)
-
         # MLP after MSA, both can be dropped at random
-        # x = shortcut + self.drop_path(x)
-        # x = x + self.drop_path(self.mlp(self.norm2(x)))
-        return x
 
+        #global case
+        if self.window_size == 0:
+            x = self.norm1(x)
+            x = self.attn(x)
+            #skip connection
+            x = shortcut + self.drop_path(x)
+            x = self.norm2(x)
+            #drop with percent chance
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+
+        #local case (window attention)
+        else:
+            #first, convert to windows and save hw/pad_hw information
+            hw = (x.shape[1], x.shape[2])
+            windows, pad_hw = window_partition(x, self.window_size)
+            #attn + mlp on each window
+            for i, window in enumerate(windows):
+                new_window = self.norm1(window)
+                new_window = self.attn(new_window)
+                #skip connection
+                new_window = shortcut + self.drop_path(new_window)
+                #drop second norm and MLP with percent chance
+                new_window = new_window + self.drop_path(self.mlp(self.norm2(x)))
+                #update original window 
+                windows[i] = window
+            #use saved window infomration to unpartition
+            x = window_unpartition(windows, self.window_size, pad_hw, hw)
+
+        return x
 
 #################################################################################
 # Part II.2: Design and train a vision Transformer
