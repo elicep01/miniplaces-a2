@@ -275,20 +275,23 @@ class Attention(nn.Module):
         # Fill in the code here
 
         #apply transpose but only on last two layers
-        k_transpose = k.reshape(-2, -1) 
+        k_transpose = k.transpose(-2, -1) #shape (B * nHead, C, H * W)
         #the vector size for each pixel/head
         d_k = q.shape[-1] 
 
         #calculate vector similarity between key and query.
-        similarity = q @ k_transpose
+        similarity = q @ k_transpose #shape (B * nHead, H * W, H * W)
         #normalize and softmax (dim=-1 means it's along each C vector)
-        similarity = (similarity / d_k).softmax(dim=-1)
+        similarity = (similarity / math.sqrt(d_k)).softmax(dim=-1)
 
         #calculate attn
-        attn = similarity @ v
-        
-        #reshape into an output form
-        x = attn.reshape(B*self.num_heads, H*W, -1)
+        attn = similarity @ v #shape (B * nHead, H * W, C)
+
+        #separate out the heads.
+        x = attn.reshape(B, self.num_heads, H*W, -1)
+        #move heads to the end, then reshape into an output form
+        x = x.permute(0, 2, 1, 3)
+        x = x.reshape(B, H, W, -1)
         ########################################################################
         return x
 
@@ -337,8 +340,6 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x):
         shortcut = x
-        x = self.norm1(x)
-
         ########################################################################
         # Fill in the code here
         ########################################################################
@@ -348,12 +349,9 @@ class TransformerBlock(nn.Module):
 
         #global case
         if self.window_size == 0:
-            x = self.norm1(x)
-            x = self.attn(x)
-            #skip connection
-            x = shortcut + self.drop_path(x)
-            x = self.norm2(x)
-            #drop with percent chance
+            #drop with percent chance (attn)
+            x = shortcut + self.drop_path(self.attn(self.norm1(x)))
+            #drop with percent chance (mlp)
             x = x + self.drop_path(self.mlp(self.norm2(x)))
 
         #local case (window attention)
@@ -363,14 +361,12 @@ class TransformerBlock(nn.Module):
             windows, pad_hw = window_partition(x, self.window_size)
             #attn + mlp on each window
             for i, window in enumerate(windows):
-                new_window = self.norm1(window)
-                new_window = self.attn(new_window)
-                #skip connection
-                new_window = shortcut + self.drop_path(new_window)
+                #drop with percent chance (attn)
+                new_window = window + self.drop_path(self.attn(self.norm1(window)))
                 #drop second norm and MLP with percent chance
-                new_window = new_window + self.drop_path(self.mlp(self.norm2(x)))
+                new_window = new_window + self.drop_path(self.mlp(self.norm2(new_window)))
                 #update original window 
-                windows[i] = window
+                windows[i] = new_window
             #use saved window infomration to unpartition
             x = window_unpartition(windows, self.window_size, pad_hw, hw)
 
