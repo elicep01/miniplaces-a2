@@ -90,7 +90,7 @@ class CustomConv2DFunction(Function):
             output_unf += bias.view(1, -1, 1)
 
         # Reshape to output
-        output = output_unf.view(N, C_out, H_out, W_out)
+        output = output_unf.view(N, C_out, H_out, W_out).clone()
 
         ########################################################################
 
