@@ -59,10 +59,43 @@ class CustomConv2DFunction(Function):
 
         ########################################################################
         # Fill in the code here
+
+        # Input dimensions (batch size, # input channels, input height, input width)
+        # Ex. batch of 10 RGB images sized 32×32: input_feats.shape == (10, 3, 32, 32)
+        N, C_in, H, W = input_feats.shape 
+        
+        # Weight dimensions (# filters, # input channels, filter kernel size)
+        # Ex. 16 filters of size 3×3 on RGB input: weight.shape == (16, 3, 3, 3)
+        C_out, _, K, _ = weight.shape 
+
+        # Compute output feature map spatial dimensions
+        H_out = (H + 2 * padding - K) // stride + 1
+        W_out = (W + 2 * padding - K) // stride + 1
+
+        # Unfold input into shape (N, (C_in * K * K), (H_out * W_out)):
+        # the torch unfold() function takes care of:
+        #   applying zero padding, 
+        #   extracting all sliding patches of size (C_in, K, K),
+        #   spacing them correctly according to the stride,
+        #   stacking all column vectors side by side
+        input_unf = torch.nn.functional.unfold(input_feats, kernel_size=K, padding=padding, stride=stride)
+
+        # Matrix multiplication:
+        # weights
+        weight_flat = weight.view(C_out, -1) # each row = 1 flattened filter
+        output_unf = weight_flat  @ input_unf  # (N, C_out, (H_out * W_out))
+
+        # bias
+        if bias is not None:
+            output_unf += bias.view(1, -1, 1)
+
+        # Reshape to output
+        output = output_unf.view(N, C_out, H_out, W_out)
+
         ########################################################################
 
         # save for backward (you need to save the unfolded tensor into ctx)
-        # ctx.save_for_backward(your_vars, weight, bias)
+        ctx.save_for_backward(input_unf, weight, bias)
 
         return output
 
@@ -72,16 +105,16 @@ class CustomConv2DFunction(Function):
         Backward propagation of convolution operation
 
         Args:
-          grad_output: gradients of the outputs
+          grad_output: gradients of the outputs (∂L/∂Y; where Y = Conv(X, W, b))
 
         Outputs:
-          grad_input: gradients of the input features
-          grad_weight: gradients of the convolution weight
-          grad_bias: gradients of the bias term
+          grad_input: gradients of the input features (∂L/∂X)
+          grad_weight: gradients of the convolution weight (∂L/∂W)
+          grad_bias: gradients of the bias term (∂L/∂b)
 
         """
         # unpack tensors and initialize the grads
-        # your_vars, weight, bias = ctx.saved_tensors
+        input_unf, weight, bias = ctx.saved_tensors
         grad_input = grad_weight = grad_bias = None
 
         # recover the conv params
@@ -93,11 +126,46 @@ class CustomConv2DFunction(Function):
 
         ########################################################################
         # Fill in the code here
+
+        # Same shape as output from forward
+        N, C_out, H_out, W_out = grad_output.shape
+
+        # Same shape as convolution filters
+        C_out, C_in, K, _ = weight.shape
+
+        # Flatten spatial dimensions so each feature map becomes a 2D matrix
+        grad_output_reshaped = grad_output.reshape(N, C_out, -1)
+
+        # Compute gradient w.r.t. input (∂L/∂X)
+        # From the forward: Y_unf = W_flat * X_unf
+        # So the gradient w.r.t. the unfolded input is: ∂L/∂X_unf = W_flat.t() @ ∂L/∂Y_unf
+        if ctx.needs_input_grad[0]:
+            grad_input_unf = weight.view(C_out, -1).t() @ grad_output_reshaped
+            # then fold patches back into 2D spatial layout to get gradients w.r.t original input tensor
+            grad_input = torch.nn.functional.fold(
+                grad_input_unf,
+                output_size=(input_height, input_width),
+                kernel_size=K,
+                padding=padding,
+                stride=stride,
+            )
+
+        # Compute gradient w.r.t. weights (∂L/∂W)
+        # From the forward: Y_unf = W_flat * X_unf
+        # So the gradient w.r.t. the weights is: ∂L/∂W_flat = ∂L/∂Y_unf @ X_unf.t()
+        if ctx.needs_input_grad[1]:
+            # Each output channel’s gradient is a weighted sum of the input patches that contributed to it.
+            grad_weight = grad_output_reshaped @ input_unf.transpose(1, 2)
+            # We have one such gradient per sample in the batch, so we sum over the batch dimension:
+            grad_weight = grad_weight.sum(0)
+            # Finally, reshape back to the original kernel shape
+            grad_weight = grad_weight.view(C_out, C_in, K, K) # (C_out, C_in, K, K) is same as weight
+
         ########################################################################
         # compute the gradients w.r.t. input and params
 
+        # Compute gradient w.r.t. bias (∂L/∂b)
         if bias is not None and ctx.needs_input_grad[2]:
-            # compute the gradients w.r.t. bias (if any)
             grad_bias = grad_output.sum((0, 2, 3))
 
         return grad_input, grad_weight, grad_bias, None, None
