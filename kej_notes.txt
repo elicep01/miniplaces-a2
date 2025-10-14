@@ -1,0 +1,11 @@
+1. Created VM instance (need to select image with cuda pre-installed)
+2. Installed miniconda (https://www.anaconda.com/docs/getting-started/miniconda/install#linux-2)
+3. Created env for assignment (called hw2)
+4. Installed gpu-compatible pytorch (https://pytorch.org/get-started/locally/) + other dependencies
+5. Cloned the repo into my home folder (home/kejohnson32)
+6. Ran download_data.sh script to get the dataset
+7. Started training first network:
+    7.1 tmux
+    7.2 python ./main.py ../data --epochs=60
+    7.3 to exit container: ctrl+b, d
+    7.4 to attach back to container: tmux attach
