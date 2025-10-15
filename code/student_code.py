@@ -271,9 +271,31 @@ class Attention(nn.Module):
         )
         # q, k, v with shape (B * nHead, H * W, C)
         q, k, v = qkv.reshape(3, B * self.num_heads, H * W, -1).unbind(0)
+
         ########################################################################
-        # Fill in the code here
+        # Compute attention
         ########################################################################
+        
+        # Transpose k for matrix multiplication: (B*nHead, C, H*W)
+        k_t = k.transpose(-2, -1)
+        
+        # Compute attention scores: (B*nHead, H*W, H*W)
+        attn = (q @ k_t) * self.scale
+        
+        # Apply softmax to get attention weights
+        attn = attn.softmax(dim=-1)
+        
+        # Apply attention to values: (B*nHead, H*W, C)
+        x = attn @ v
+        
+        # Reshape back: (B, num_heads, H*W, C) -> (B, H*W, num_heads, C)
+        x = x.reshape(B, self.num_heads, H * W, -1).transpose(1, 2)
+        
+        # Concatenate heads: (B, H*W, num_heads*C) -> (B, H, W, dim)
+        x = x.reshape(B, H, W, -1)
+        
+        # Final projection
+        x = self.proj(x)
         return x
 
 class TransformerBlock(nn.Module):
@@ -332,6 +354,33 @@ class TransformerBlock(nn.Module):
         # MLP after MSA, both can be dropped at random
         # x = shortcut + self.drop_path(x)
         # x = x + self.drop_path(self.mlp(self.norm2(x)))
+        ########################################################################
+        # Transformer block with Pre-LN and window attention support
+        ########################################################################
+        
+        # Save input for residual connection
+        shortcut = x
+        
+        # Pre-LN: normalize before attention
+        x = self.norm1(x)
+        
+        # Apply attention (with optional windowing)
+        if self.window_size > 0:
+            # Local window attention
+            B, H, W, C = x.shape
+            x, pad_hw = window_partition(x, self.window_size)
+            x = self.attn(x)
+            x = window_unpartition(x, self.window_size, pad_hw, (H, W))
+        else:
+            # Global attention
+            x = self.attn(x)
+        
+        # First residual connection with drop path
+        x = shortcut + self.drop_path(x)
+        
+        # MLP block with Pre-LN
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+
         return x
 
 
@@ -416,6 +465,30 @@ class SimpleViT(nn.Module):
         ########################################################################
         # The implementation shall define some Transformer blocks
 
+        ########################################################################
+        # Create Transformer blocks
+        ########################################################################
+        self.blocks = nn.ModuleList([
+            TransformerBlock(
+                dim=embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                drop_path=dpr[i],
+                norm_layer=norm_layer,
+                act_layer=act_layer,
+                window_size=window_size if i in window_block_indexes else 0,
+            )
+            for i in range(depth)
+        ])
+
+        # Final normalization layer
+        self.norm = norm_layer(embed_dim)
+        
+        # Classification head
+        self.head = nn.Linear(embed_dim, num_classes)
+
+        # Initialize weights
         if self.pos_embed is not None:
             trunc_normal_(self.pos_embed, std=0.02)
 
@@ -433,8 +506,29 @@ class SimpleViT(nn.Module):
 
     def forward(self, x):
         ########################################################################
-        # Fill in the code here
+        # Forward pass through Vision Transformer
         ########################################################################
+        
+        # Patch embedding: (B, C, H, W) -> (B, H', W', embed_dim)
+        x = self.patch_embed(x)
+        
+        # Add positional embedding
+        if self.pos_embed is not None:
+            x = x + self.pos_embed
+        
+        # Apply transformer blocks
+        for block in self.blocks:
+            x = block(x)
+        
+        # Final normalization
+        x = self.norm(x)
+        
+        # Global average pooling: (B, H', W', C) -> (B, C)
+        x = x.mean(dim=[1, 2])
+        
+        # Classification head: (B, C) -> (B, num_classes)
+        x = self.head(x)
+        
         return x
 
 # change this to your model!
