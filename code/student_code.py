@@ -350,7 +350,7 @@ class CustomNet(nn.Module):
 class CustomNet2(nn.Module):
     # a custom CNN for image classifcation
     def __init__(self, conv_op=nn.Conv2d, num_classes=100):
-        super(CustomNet, self).__init__()
+        super(CustomNet2, self).__init__()
         # you can start from here and create a better model
         self.features = nn.Sequential(
 
