@@ -137,7 +137,7 @@ parser.add_argument(
 )
 parser.add_argument('-a', '--attack', action='store_true',
                     help='generate adversarial samples')
-parser.add_argument('--validate-attack', action='store_true',
+parser.add_argument("--vis",'--validate-attack', action='store_true',
                     help='validate on adversarial samples')
 parser.add_argument('--attack-epsilon', type=float, default=0.1,
                     help='epsilon for PGD attack (default: 0.1)')

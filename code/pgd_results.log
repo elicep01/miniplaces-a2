@@ -1,0 +1,58 @@
+=== Test 1: SimpleNet Default Attack ===
+Use GPU: 0
+Traceback (most recent call last):
+  File "/home/epriyadarshi/miniplaces-a2/code/./main.py", line 589, in <module>
+    main(args)
+  File "/home/epriyadarshi/miniplaces-a2/code/./main.py", line 229, in main
+    train_dataset = MiniPlacesLoader(
+  File "/home/epriyadarshi/miniplaces-a2/code/custom_dataloader.py", line 32, in __init__
+    raise ValueError("Label file {:s} does not exist!".format(label_file))
+ValueError: Label file ../data/train.txt does not exist!
+=== Test 1: SimpleNet Default Attack ===
+/home/kejohnson32/miniconda3/envs/hw2/lib/python3.10/site-packages/torch/utils/data/dataloader.py:624: UserWarning: This DataLoader will create 4 worker processes in total. Our suggested max number of worker in current system is 2, which is smaller than what this DataLoader is going to create. Please be aware that excessive worker creation might get DataLoader running slow or even freeze, lower the worker number to avoid potential slowness/freeze if necessary.
+  warnings.warn(
+Use GPU: 0
+=> no checkpoint found at '../logs/exp_2025-10-13 23:30:58/models/model_best.pth.tar'
+=== Test 1: SimpleNet Default Attack ===
+/home/kejohnson32/miniconda3/envs/hw2/lib/python3.10/site-packages/torch/utils/data/dataloader.py:624: UserWarning: This DataLoader will create 4 worker processes in total. Our suggested max number of worker in current system is 2, which is smaller than what this DataLoader is going to create. Please be aware that excessive worker creation might get DataLoader running slow or even freeze, lower the worker number to avoid potential slowness/freeze if necessary.
+  warnings.warn(
+Use GPU: 0
+=> loading checkpoint '../models/model_best_simplenet.pth.tar'
+=> loaded checkpoint '../models/model_best_simplenet.pth.tar' (epoch 59, acc1 43.82)
+Generating adversarial samples for the model ..
+Test: [0/100]	Time 2.581 (2.581)	Acc@1 33.00 (33.00)	Acc@5 72.00 (72.00)
+Test: [10/100]	Time 0.478 (0.909)	Acc@1 41.00 (41.45)	Acc@5 64.00 (67.73)
+Test: [20/100]	Time 0.478 (0.828)	Acc@1 39.00 (39.00)	Acc@5 62.00 (65.95)
+Test: [30/100]	Time 0.481 (0.789)	Acc@1 39.00 (39.13)	Acc@5 68.00 (65.77)
+Test: [40/100]	Time 0.483 (0.772)	Acc@1 33.00 (38.90)	Acc@5 61.00 (65.41)
+Test: [50/100]	Time 0.483 (0.759)	Acc@1 36.00 (39.24)	Acc@5 67.00 (65.43)
+Test: [60/100]	Time 0.483 (0.755)	Acc@1 36.00 (39.20)	Acc@5 63.00 (65.11)
+Test: [70/100]	Time 0.483 (0.751)	Acc@1 37.00 (39.24)	Acc@5 63.00 (64.82)
+Test: [80/100]	Time 0.485 (0.748)	Acc@1 34.00 (39.09)	Acc@5 62.00 (64.77)
+Test: [90/100]	Time 0.486 (0.749)	Acc@1 44.00 (39.12)	Acc@5 69.00 (64.70)
+******Acc@1 38.920 Acc@5 64.590
+=== Test 2: SimpleNet Weak Attack (ε=0.05) ===
+usage: main.py [-h] [--adv-train] [-j N] [--epochs E] [--warmup W]
+               [--clip-grad C] [--start-epoch E0] [-b B] [--lr LR]
+               [--momentum M] [--wd W] [-p PRINT_FREQ] [--resume PATH] [-e]
+               [-a] [-v] [--use-custom-conv] [--use-vit] [--use-resnet18]
+               [--gpu GPU]
+               DIR
+main.py: error: unrecognized arguments: --attack-epsilon 0.05
+=== Test 3: SimpleNet Strong Attack (ε=0.2) ===
+usage: main.py [-h] [--adv-train] [-j N] [--epochs E] [--warmup W]
+               [--clip-grad C] [--start-epoch E0] [-b B] [--lr LR]
+               [--momentum M] [--wd W] [-p PRINT_FREQ] [--resume PATH] [-e]
+               [-a] [-v] [--use-custom-conv] [--use-vit] [--use-resnet18]
+               [--gpu GPU]
+               DIR
+main.py: error: unrecognized arguments: --attack-epsilon 0.2
+=== Test 4: SimpleNet More Steps (20) ===
+usage: main.py [-h] [--adv-train] [-j N] [--epochs E] [--warmup W]
+               [--clip-grad C] [--start-epoch E0] [-b B] [--lr LR]
+               [--momentum M] [--wd W] [-p PRINT_FREQ] [--resume PATH] [-e]
+               [-a] [-v] [--use-custom-conv] [--use-vit] [--use-resnet18]
+               [--gpu GPU]
+               DIR
+main.py: error: unrecognized arguments: --attack-steps 20
+=== PGD ATTACKS COMPLETE ===

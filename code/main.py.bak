@@ -44,7 +44,6 @@ from student_code import default_attack, default_visfunction
 
 # the arg parser
 parser = argparse.ArgumentParser(description="PyTorch Image Classification")
-parser.add_argument("--adv-train", dest="adv_train", action="store_true", help="Use PGD adversarial examples during training")
 parser.add_argument("data_folder", metavar="DIR", help="path to dataset")
 parser.add_argument(
     "-j",
@@ -135,14 +134,13 @@ parser.add_argument(
     action="store_true",
     help="evaluate model on validation set",
 )
-parser.add_argument('-a', '--attack', action='store_true',
-                    help='generate adversarial samples')
-parser.add_argument('--validate-attack', action='store_true',
-                    help='validate on adversarial samples')
-parser.add_argument('--attack-epsilon', type=float, default=0.1,
-                    help='epsilon for PGD attack (default: 0.1)')
-parser.add_argument('--attack-steps', type=int, default=10,
-                    help='number of PGD steps (default: 10)')
+parser.add_argument(
+    "-a",
+    "--attack",
+    dest="attack",
+    action="store_true",
+    help="Attack with adersarial samples on validation set",
+)
 parser.add_argument(
     "-v",
     "--vis",
@@ -298,9 +296,6 @@ def main(args):
     model_folder = os.path.join(log_folder, 'models')
     os.makedirs(model_folder, exist_ok=True)
 
-    # adversarial training attacker (if enabled)
-    attacker_for_train = default_attack(criterion) if getattr(args, 'adv_train', False) else None
-
     # set up visualizer
     if args.vis:
         visualizer = default_visfunction
@@ -324,9 +319,7 @@ def main(args):
             -1,
             args,
             writer,
-            attacker=default_attack(criterion, epsilon=args.attack_epsilon, 
-                       alpha=args.attack_epsilon/args.attack_steps, 
-                       num_iter=args.attack_steps),
+            attacker=default_attack(criterion),
             visualizer=visualizer,
         )
         return
@@ -347,8 +340,7 @@ def main(args):
             scheduler,
             epoch,
             args,
-            writer,
-            attacker=attacker_for_train
+            writer
         )
 
         # evaluate on validation set
@@ -390,7 +382,7 @@ def save_checkpoint(
         torch.save(state, os.path.join(file_folder, "model_best.pth.tar"))
 
 
-def train(train_loader, model, criterion, optimizer, scheduler, epoch, args, writer, attacker=None):
+def train(train_loader, model, criterion, optimizer, scheduler, epoch, args, writer):
     """Training the model"""
     # adjust the learning rate
     num_iters = len(train_loader)
@@ -417,12 +409,8 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, args, wri
             input = input.cuda(args.gpu, non_blocking=True)
             target = target.cuda(args.gpu, non_blocking=True)
 
-        # compute output (adversarial if requested)
-        if attacker is not None:
-            adv_input = attacker.perturb(model, input)
-            output = model(adv_input)
-        else:
-            output = model(input)
+        # compute output
+        output = model(input)
         loss = criterion(output, target)
 
         # measure accuracy and record loss
