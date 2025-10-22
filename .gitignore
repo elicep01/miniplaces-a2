@@ -13,3 +13,6 @@ models/
 *.pt
 *.ckpt
 __pycache__/
+data/
+logs/
+*.tfevents*
