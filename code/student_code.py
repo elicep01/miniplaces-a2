@@ -642,74 +642,87 @@ def get_val_transforms():
 # Part III: Adversarial samples
 ################################################################################
 class PGDAttack(object):
-    def __init__(self, loss_fn, num_steps=10, step_size=0.01, epsilon=0.1):
+    def __init__(self, loss_fn, num_steps=10, step_size=2/255.0, epsilon=8/255.0,
+                 random_start=True, clip_min=-3.0, clip_max=3.0):
         """
-        Attack a network by Project Gradient Descent. The attacker performs
-        k steps of gradient descent of step size a, while always staying
-        within the range of epsilon (under l infinity norm) from the input image.
+        Projected Gradient Descent (ℓ∞) attack, targeted to the least-confident label.
 
         Args:
-          loss_fn: loss function used for the attack
-          num_steps: (int) number of steps for PGD
-          step_size: (float) step size of PGD (i.e., alpha in our lecture)
-          epsilon: (float) the range of acceptable samples
-                   for our normalization, 0.1 ~ 6 pixel levels
+          loss_fn     : torch loss function (e.g., nn.CrossEntropyLoss())
+          num_steps   : number of PGD iterations (k)
+          step_size   : PGD step size α (same units as input)
+          epsilon     : ℓ∞ budget ε (same units as input)
+          random_start: start at a random point in the ε-ball (stronger attack)
+          clip_min    : lower clamp bound for inputs (use -3..3 for ImageNet-normalized)
+          clip_max    : upper clamp bound for inputs
         """
         self.loss_fn = loss_fn
-        self.num_steps = num_steps
-        self.step_size = step_size
-        self.epsilon = epsilon
+        self.num_steps = int(num_steps)
+        self.step_size = float(step_size)
+        self.epsilon = float(epsilon)
+        self.random_start = bool(random_start)
+        self.clip_min = float(clip_min)
+        self.clip_max = float(clip_max)
+
+    @torch.no_grad()
+    def _project_and_clip(self, x_adv, x_orig):
+        # project onto ℓ∞ ball around x_orig then clip to valid range
+        delta = torch.clamp(x_adv - x_orig, -self.epsilon, self.epsilon)
+        x_adv = torch.clamp(x_orig + delta, self.clip_min, self.clip_max)
+        return x_adv
 
     def perturb(self, model, input):
         """
-        Given input image X (torch tensor), return an adversarial sample
-        (torch tensor) using PGD of the least confident label.
+        Given a batch X (N,C,H,W) return adversarial examples X_adv of the same shape.
+        Uses **targeted** PGD toward the least-confident class.
 
-        See https://openreview.net/pdf?id=rJzIBfZAb
-
-        Args:
-          model: (nn.module) network to attack
-          input: (torch tensor) input image of size N * C * H * W
-
-        Outputs:
-          output: (torch tensor) an adversarial sample of the given network
+        Notes:
+        - Runs PGD in the **same space** the model expects (your inputs are normalized).
+        - Sets model to eval() during the attack.
         """
-        # clone the input tensor and disable the gradients
-        output = input.clone()
-        input.requires_grad = False
-        original_input = input.clone()
+        device = next(model.parameters()).device
+        x_orig = input.detach().to(device)
+        x_adv = x_orig.clone()
 
-        # loop over the number of steps
-        for step in range(self.num_steps):
-            output = output.detach()
-            output.requires_grad = True
-            
-            logits = model(output)
-            
+        # Optional random start inside ε-ball
+        if self.random_start:
             with torch.no_grad():
-                least_confident_label = logits.argmin(dim=1)
-            
-            loss = self.loss_fn(logits, least_confident_label)
-            
-            model.zero_grad()
-            if output.grad is not None:
-                output.grad.zero_()
-            loss.backward()
-            
-            with torch.no_grad():
-                grad_sign = output.grad.sign()
-                output = output + self.step_size * grad_sign
-                
-                perturbation = output - original_input
-                perturbation = torch.clamp(perturbation, -self.epsilon, self.epsilon)
-                output = original_input + perturbation
-                
-                output = torch.clamp(output, -3.0, 3.0)
+                x_adv = x_adv + (torch.rand_like(x_adv) * 2 - 1) * self.epsilon
+                x_adv = torch.clamp(x_adv, self.clip_min, self.clip_max)
+                x_adv = self._project_and_clip(x_adv, x_orig)
 
-        return output.detach()
+        # PGD loop
+        model_was_training = model.training
+        model.eval()
+
+        for _ in range(self.num_steps):
+            # enable grad for x_adv only for this step
+            x_adv = x_adv.detach().clone().requires_grad_(True)
+
+            logits = model(x_adv)  # (N, num_classes)
+
+            # choose least-confident label as target (argmin of softmax/logits are equivalent)
+            with torch.no_grad():
+                target = logits.argmin(dim=1)
+
+            loss = self.loss_fn(logits, target)
+
+            # backprop w.r.t. input
+            grad, = torch.autograd.grad(loss, x_adv, retain_graph=False, create_graph=False)
+
+            # targeted PGD: step to MINIMIZE loss(target|x), i.e., move **against** grad sign
+            with torch.no_grad():
+                x_adv = x_adv - self.step_size * grad.sign()
+                x_adv = self._project_and_clip(x_adv, x_orig)
+
+        if model_was_training:
+            model.train()
+
+        return x_adv.detach()
 
 
 default_attack = PGDAttack
+
 
 
 ################################################################################
