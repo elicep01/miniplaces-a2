@@ -346,6 +346,63 @@ class CustomNet(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.fc(x)
         return x
+    
+class CustomNet2(nn.Module):
+    # a custom CNN for image classifcation
+    def __init__(self, conv_op=nn.Conv2d, num_classes=100):
+        super(CustomNet, self).__init__()
+        # you can start from here and create a better model
+        self.features = nn.Sequential(
+
+            # BLOCK1: Start with large conv Kernel 7x7 to get general features
+            conv_op(3, 64, kernel_size=7, stride=2, padding=3),
+            nn.ReLU(inplace=True),
+            # max pooling 1/2
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            # BLOCK2: 2x 2 Conv with Skip - Conv Kernel 3x3
+            SkipBlock(64, 64, kernel_size=3, padding=1),
+            SkipBlock(64,64, kernel_size=3, padding=1),
+
+            # max pooling 1/2
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            # BLOCK 3: 2 Conv with Skip - Conv Kernel 3x3
+            SkipBlock(64, 256, kernel_size=3, padding=1),
+
+            # max pooling 1/2
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            # BLOCK 4: 2 Conv with Skip - Conv Kernel 3x3
+            SkipBlock(256, 512, kernel_size=3, padding=1),  
+        )
+
+        # global avg pooling + FC
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+
+    def reset_parameters(self):
+        # init all params
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_out", nonlinearity="relu"
+                )
+                if m.bias is not None:
+                    nn.init.consintat_(m.bias, 0.0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, x):
+        # you can implement adversarial training here
+        # if self.training:
+        #   # generate adversarial sample based on x
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x
 
 class  SkipBlock(nn.Module):
     def __init__(self, in_size , out_size, kernel_size, padding):
@@ -372,7 +429,7 @@ class  SkipBlock(nn.Module):
 
 
 # change this to your model!
-default_cnn_model = CustomNet
+default_cnn_model = CustomNet2
 
 ################################################################################
 # Part II.1: Understanding self-attention and Transformer block
