@@ -213,29 +213,133 @@ class SimpleNet(nn.Module):
                     m.weight, mode="fan_out", nonlinearity="relu"
                 )
                 if m.bias is not None:
-                    nn.init.consintat_(m.bias, 0.0)
+                    nn.init.constant_(m.bias, 0.0)
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1.0)
                 nn.init.constant_(m.bias, 0.0)
 
     def forward(self, x):
         # you can implement adversarial training here
-        # if self.training:
-        #   # generate adversarial sample based on x
+        # if you implement adversarial training, label and configure the attack params here
         x = self.features(x)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
         return x
 
-# change this to your model!
+
+# create a CustomNet class here for the training and design of you CNN
+class CustomNet(nn.Module):
+    def __init__(self, conv_op=nn.Conv2d, num_classes=100):
+        super(CustomNet, self).__init__()
+        
+        # Initial convolution block
+        self.conv1 = conv_op(3, 64, kernel_size=7, stride=2, padding=3)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        # Residual Block 1
+        self.conv2_1 = conv_op(64, 64, kernel_size=1, stride=1, padding=0)
+        self.bn2_1 = nn.BatchNorm2d(64)
+        self.conv2_2 = conv_op(64, 64, kernel_size=3, stride=1, padding=1)
+        self.bn2_2 = nn.BatchNorm2d(64)
+        self.conv2_3 = conv_op(64, 256, kernel_size=1, stride=1, padding=0)
+        self.bn2_3 = nn.BatchNorm2d(256)
+        
+        # Shortcut for residual block 1
+        self.shortcut1 = nn.Sequential(
+            conv_op(64, 256, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(256)
+        )
+        
+        self.maxpool2 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        # Residual Block 2
+        self.conv3_1 = conv_op(256, 128, kernel_size=1, stride=1, padding=0)
+        self.bn3_1 = nn.BatchNorm2d(128)
+        self.conv3_2 = conv_op(128, 128, kernel_size=3, stride=1, padding=1)
+        self.bn3_2 = nn.BatchNorm2d(128)
+        self.conv3_3 = conv_op(128, 512, kernel_size=1, stride=1, padding=0)
+        self.bn3_3 = nn.BatchNorm2d(512)
+        
+        # Shortcut for residual block 2
+        self.shortcut2 = nn.Sequential(
+            conv_op(256, 512, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(512)
+        )
+        
+        # Global average pooling + FC
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, x):
+        # Initial convolution
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        
+        # Residual Block 1
+        identity = x
+        out = self.conv2_1(x)
+        out = self.bn2_1(out)
+        out = self.relu(out)
+        out = self.conv2_2(out)
+        out = self.bn2_2(out)
+        out = self.relu(out)
+        out = self.conv2_3(out)
+        out = self.bn2_3(out)
+        
+        # Skip connection
+        identity = self.shortcut1(identity)
+        out += identity
+        out = self.relu(out)
+        
+        out = self.maxpool2(out)
+        
+        # Residual Block 2
+        identity = out
+        out = self.conv3_1(out)
+        out = self.bn3_1(out)
+        out = self.relu(out)
+        out = self.conv3_2(out)
+        out = self.bn3_2(out)
+        out = self.relu(out)
+        out = self.conv3_3(out)
+        out = self.bn3_3(out)
+        
+        # Skip connection
+        identity = self.shortcut2(identity)
+        out += identity
+        out = self.relu(out)
+        
+        # Global average pooling + FC
+        out = self.avgpool(out)
+        out = out.view(out.size(0), -1)
+        out = self.fc(out)
+        
+        return out
+
+# default model that will get picked up in main.py file for training and eval
 default_cnn_model = SimpleNet
 
+
 ################################################################################
-# Part II.1: Understanding self-attention and Transformer block
+# Part II: Vision Transformer
 ################################################################################
 class Attention(nn.Module):
-    """Multi-head Self-Attention."""
+    """Multi-head Attention block with relative position embeddings."""
 
     def __init__(
         self,
@@ -245,8 +349,7 @@ class Attention(nn.Module):
     ):
         """
         Args:
-            dim (int): Number of input channels. We assume Q, K, V will be of
-                same dimension as the input.
+            dim (int): Number of input channels.
             num_heads (int): Number of attention heads.
             qkv_bias (bool:  If True, add a learnable bias to query, key, value.
         """
@@ -255,51 +358,44 @@ class Attention(nn.Module):
         head_dim = dim // num_heads
         self.scale = head_dim**-0.5
 
-        # linear projection for query, key, value
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        # linear projection at the end
         self.proj = nn.Linear(dim, dim)
 
     def forward(self, x):
-        # input size (B, H, W, C)
-        B, H, W, _ = x.shape
-        # qkv with shape (3, B, nHead, H * W, C)
-        qkv = (
-            self.qkv(x).reshape(
-                B, H * W, 3, self.num_heads, -1
-            ).permute(2, 0, 3, 1, 4)
-        )
-        # q, k, v with shape (B * nHead, H * W, C)
-        q, k, v = qkv.reshape(3, B * self.num_heads, H * W, -1).unbind(0)
-
-        ########################################################################
-        # Compute attention
-        ########################################################################
+        """
+        Args:
+            x (tensor): input features with shape of (B, H, W, C)
+        """
+        B, H, W, C = x.shape
+        N = H * W
         
-        # Transpose k for matrix multiplication: (B*nHead, C, H*W)
-        k_t = k.transpose(-2, -1)
+        # Flatten spatial dimensions: (B, H, W, C) -> (B, N, C)
+        x_flat = x.reshape(B, N, C)
         
-        # Compute attention scores: (B*nHead, H*W, H*W)
-        attn = (q @ k_t) * self.scale
+        # Generate Q, K, V
+        qkv = self.qkv(x_flat).reshape(B, N, 3, self.num_heads, C // self.num_heads)
+        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, num_heads, N, head_dim)
+        q, k, v = qkv[0], qkv[1], qkv[2]
         
-        # Apply softmax to get attention weights
+        # Attention
+        attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
         
-        # Apply attention to values: (B*nHead, H*W, C)
-        x = attn @ v
+        # Apply attention to values
+        x_attn = (attn @ v).transpose(1, 2).reshape(B, N, C)
         
-        # Reshape back: (B, num_heads, H*W, C) -> (B, H*W, num_heads, C)
-        x = x.reshape(B, self.num_heads, H * W, -1).transpose(1, 2)
+        # Project and reshape back
+        x_out = self.proj(x_attn)
+        x_out = x_out.reshape(B, H, W, C)
         
-        # Concatenate heads: (B, H*W, num_heads*C) -> (B, H, W, dim)
-        x = x.reshape(B, H, W, -1)
-        
-        # Final projection
-        x = self.proj(x)
-        return x
+        return x_out
+
 
 class TransformerBlock(nn.Module):
-    """Transformer blocks with support of local window self-attention"""
+    """
+    Transformer blocks with support of window attention and residual propagation blocks
+    """
+
     def __init__(
         self,
         dim,
@@ -321,7 +417,7 @@ class TransformerBlock(nn.Module):
             norm_layer (nn.Module): Normalization layer.
             act_layer (nn.Module): Activation layer.
             window_size (int): Window size for window attention blocks.
-                If it equals 0, then global attention is used.
+                If it equals 0, then not use window attention.
         """
         super().__init__()
         self.norm1 = norm_layer(dim)
@@ -331,91 +427,69 @@ class TransformerBlock(nn.Module):
             qkv_bias=qkv_bias,
         )
 
-        self.drop_path = DropPath(drop_path) if drop_path>0.0 else nn.Identity()
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.norm2 = norm_layer(dim)
         self.mlp = MLP(
             in_features=dim,
             hidden_features=int(dim * mlp_ratio),
-            act_layer=act_layer
+            act_layer=act_layer,
         )
 
         self.window_size = window_size
 
     def forward(self, x):
+        """
+        Args:
+            x (tensor): input features with shape of (B, H, W, C)
+        """
         shortcut = x
         x = self.norm1(x)
-
-        ########################################################################
-        # Fill in the code here
-        ########################################################################
-        # The implementation shall support local self-attention
-        # (also known as window attention)
-
-        # MLP after MSA, both can be dropped at random
-        # x = shortcut + self.drop_path(x)
-        # x = x + self.drop_path(self.mlp(self.norm2(x)))
-        ########################################################################
-        # Transformer block with Pre-LN and window attention support
-        ########################################################################
         
-        # Save input for residual connection
-        shortcut = x
-        
-        # Pre-LN: normalize before attention
-        x = self.norm1(x)
-        
-        # Apply attention (with optional windowing)
+        # Window partition
         if self.window_size > 0:
-            # Local window attention
-            B, H, W, C = x.shape
+            H, W = x.shape[1], x.shape[2]
             x, pad_hw = window_partition(x, self.window_size)
-            x = self.attn(x)
+        
+        # Attention
+        x = self.attn(x)
+        
+        # Reverse window partition
+        if self.window_size > 0:
             x = window_unpartition(x, self.window_size, pad_hw, (H, W))
-        else:
-            # Global attention
-            x = self.attn(x)
         
-        # First residual connection with drop path
+        # FFN
         x = shortcut + self.drop_path(x)
-        
-        # MLP block with Pre-LN
         x = x + self.drop_path(self.mlp(self.norm2(x)))
-
+        
         return x
 
 
-#################################################################################
-# Part II.2: Design and train a vision Transformer
-#################################################################################
 class SimpleViT(nn.Module):
     """
-    This module implements Vision Transformer (ViT) backbone in
-    "Exploring Plain Vision Transformer Backbones for Object Detection",
-    https://arxiv.org/abs/2203.16527
+    This module implements Vision Transformer (ViT) backbone in <https://arxiv.org/abs/2010.11929>.
     """
 
     def __init__(
         self,
         img_size=128,
-        num_classes=100,
         patch_size=16,
         in_chans=3,
-        embed_dim=192,
-        depth=4,
-        num_heads=4,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
         mlp_ratio=4.0,
         qkv_bias=True,
-        drop_path_rate=0.1,
+        drop_path_rate=0.0,
         norm_layer=nn.LayerNorm,
         act_layer=nn.GELU,
         use_abs_pos=True,
-        window_size=4,
-        window_block_indexes=(0, 2),
+        window_size=0,
+        window_block_indexes=[],
+        num_classes=100,
     ):
         """
         Args:
             img_size (int): Input image size.
-            num_classes (int): Number of object categories
             patch_size (int): Patch size.
             in_chans (int): Number of input image channels.
             embed_dim (int): Patch embedding dimension.
@@ -603,16 +677,163 @@ class PGDAttack(object):
         # clone the input tensor and disable the gradients
         output = input.clone()
         input.requires_grad = False
+        original_input = input.clone()
 
         # loop over the number of steps
-        # for _ in range(self.num_steps):
-        ########################################################################
-        # Fill in the code here
-        ########################################################################
+        for step in range(self.num_steps):
+            output = output.detach()
+            output.requires_grad = True
+            
+            logits = model(output)
+            
+            with torch.no_grad():
+                least_confident_label = logits.argmin(dim=1)
+            
+            loss = self.loss_fn(logits, least_confident_label)
+            
+            model.zero_grad()
+            if output.grad is not None:
+                output.grad.zero_()
+            loss.backward()
+            
+            with torch.no_grad():
+                grad_sign = output.grad.sign()
+                output = output + self.step_size * grad_sign
+                
+                perturbation = output - original_input
+                perturbation = torch.clamp(perturbation, -self.epsilon, self.epsilon)
+                output = original_input + perturbation
+                
+                output = torch.clamp(output, -3.0, 3.0)
 
-        return output
+        return output.detach()
+
 
 default_attack = PGDAttack
+
+
+################################################################################
+# Part III BONUS: Adversarial Training (+2 Points)
+################################################################################
+class SimpleNetAdversarial(nn.Module):
+    """
+    SimpleNet with adversarial training capability for BONUS section.
+    This trains a model that is robust to adversarial attacks.
+    """
+    def __init__(self, conv_op=nn.Conv2d, num_classes=100):
+        super(SimpleNetAdversarial, self).__init__()
+        
+        # Same architecture as SimpleNet
+        self.features = nn.Sequential(
+            # conv1 block: conv 7x7
+            conv_op(3, 64, kernel_size=7, stride=2, padding=3),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            # conv2 block: simple bottleneck
+            conv_op(64, 64, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            conv_op(64, 64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            conv_op(64, 256, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            # conv3 block: simple bottleneck
+            conv_op(256, 128, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            conv_op(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            conv_op(128, 512, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+        )
+        
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+        
+        # Adversarial training configuration
+        self.adversarial_training = True  # Enable adversarial training
+        self.pgd_steps = 7  # Fewer steps for faster training
+        self.pgd_alpha = 0.007  # Step size
+        self.pgd_epsilon = 0.031  # Perturbation bound
+
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, x, targets=None):
+        """
+        Forward pass with optional adversarial training.
+        
+        Args:
+            x: Input images (B, C, H, W)
+            targets: True labels (B,) - required for adversarial training
+        
+        Returns:
+            logits: Model predictions (B, num_classes)
+        """
+        # Generate adversarial examples during training if enabled
+        if self.adversarial_training and self.training and targets is not None:
+            x = self._generate_adversarial(x, targets)
+        
+        # Standard forward pass
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x
+
+    def _generate_adversarial(self, x, targets):
+        """
+        Generate adversarial examples using PGD during training.
+        
+        Args:
+            x: Clean input images
+            targets: True labels
+            
+        Returns:
+            x_adv: Adversarial examples
+        """
+        x_orig = x.detach()
+        x_adv = x.clone().detach()
+        criterion = nn.CrossEntropyLoss()
+        
+        for _ in range(self.pgd_steps):
+            x_adv.requires_grad_(True)
+            
+            # Forward pass
+            features = self.features(x_adv)
+            pooled = self.avgpool(features)
+            flattened = pooled.view(pooled.size(0), -1)
+            logits = self.fc(flattened)
+            
+            # Compute loss
+            loss = criterion(logits, targets)
+            
+            # Compute gradients
+            grad = torch.autograd.grad(loss, x_adv)[0]
+            
+            # Update adversarial example
+            with torch.no_grad():
+                x_adv = x_adv + self.pgd_alpha * grad.sign()
+                
+                # Project to epsilon ball
+                perturbation = torch.clamp(x_adv - x_orig, -self.pgd_epsilon, self.pgd_epsilon)
+                x_adv = x_orig + perturbation
+                
+                # Clamp to valid range
+                x_adv = torch.clamp(x_adv, -3.0, 3.0)
+        
+        return x_adv.detach()
+
+
+# IMPORTANT: Uncomment the line below ONLY when doing adversarial training (BONUS)
+# This will train a robust model instead of the regular SimpleNet
+# default_cnn_model = SimpleNetAdversarial
 
 
 def vis_grid(input, n_rows=10):
@@ -629,5 +850,6 @@ def vis_grid(input, n_rows=10):
     # concat all images into a big picture
     output_imgs = make_grid(input.cpu(), nrow=n_rows, normalize=True)
     return output_imgs
+
 
 default_visfunction = vis_grid
