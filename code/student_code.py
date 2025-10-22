@@ -59,10 +59,43 @@ class CustomConv2DFunction(Function):
 
         ########################################################################
         # Fill in the code here
+
+        # Input dimensions (batch size, # input channels, input height, input width)
+        # Ex. batch of 10 RGB images sized 32×32: input_feats.shape == (10, 3, 32, 32)
+        N, C_in, H, W = input_feats.shape 
+        
+        # Weight dimensions (# filters, # input channels, filter kernel size)
+        # Ex. 16 filters of size 3×3 on RGB input: weight.shape == (16, 3, 3, 3)
+        C_out, _, K, _ = weight.shape 
+
+        # Compute output feature map spatial dimensions
+        H_out = (H + 2 * padding - K) // stride + 1
+        W_out = (W + 2 * padding - K) // stride + 1
+
+        # Unfold input into shape (N, (C_in * K * K), (H_out * W_out)):
+        # the torch unfold() function takes care of:
+        #   applying zero padding, 
+        #   extracting all sliding patches of size (C_in, K, K),
+        #   spacing them correctly according to the stride,
+        #   stacking all column vectors side by side
+        input_unf = torch.nn.functional.unfold(input_feats, kernel_size=K, padding=padding, stride=stride)
+
+        # Matrix multiplication:
+        # weights
+        weight_flat = weight.view(C_out, -1) # each row = 1 flattened filter
+        output_unf = weight_flat  @ input_unf  # (N, C_out, (H_out * W_out))
+
+        # bias
+        if bias is not None:
+            output_unf += bias.view(1, -1, 1)
+
+        # Reshape to output
+        output = output_unf.view(N, C_out, H_out, W_out).clone()
+
         ########################################################################
 
         # save for backward (you need to save the unfolded tensor into ctx)
-        # ctx.save_for_backward(your_vars, weight, bias)
+        ctx.save_for_backward(input_unf, weight, bias)
 
         return output
 
@@ -72,16 +105,16 @@ class CustomConv2DFunction(Function):
         Backward propagation of convolution operation
 
         Args:
-          grad_output: gradients of the outputs
+          grad_output: gradients of the outputs (∂L/∂Y; where Y = Conv(X, W, b))
 
         Outputs:
-          grad_input: gradients of the input features
-          grad_weight: gradients of the convolution weight
-          grad_bias: gradients of the bias term
+          grad_input: gradients of the input features (∂L/∂X)
+          grad_weight: gradients of the convolution weight (∂L/∂W)
+          grad_bias: gradients of the bias term (∂L/∂b)
 
         """
         # unpack tensors and initialize the grads
-        # your_vars, weight, bias = ctx.saved_tensors
+        input_unf, weight, bias = ctx.saved_tensors
         grad_input = grad_weight = grad_bias = None
 
         # recover the conv params
@@ -93,11 +126,46 @@ class CustomConv2DFunction(Function):
 
         ########################################################################
         # Fill in the code here
+
+        # Same shape as output from forward
+        N, C_out, H_out, W_out = grad_output.shape
+
+        # Same shape as convolution filters
+        C_out, C_in, K, _ = weight.shape
+
+        # Flatten spatial dimensions so each feature map becomes a 2D matrix
+        grad_output_reshaped = grad_output.reshape(N, C_out, -1)
+
+        # Compute gradient w.r.t. input (∂L/∂X)
+        # From the forward: Y_unf = W_flat * X_unf
+        # So the gradient w.r.t. the unfolded input is: ∂L/∂X_unf = W_flat.t() @ ∂L/∂Y_unf
+        if ctx.needs_input_grad[0]:
+            grad_input_unf = weight.view(C_out, -1).t() @ grad_output_reshaped
+            # then fold patches back into 2D spatial layout to get gradients w.r.t original input tensor
+            grad_input = torch.nn.functional.fold(
+                grad_input_unf,
+                output_size=(input_height, input_width),
+                kernel_size=K,
+                padding=padding,
+                stride=stride,
+            )
+
+        # Compute gradient w.r.t. weights (∂L/∂W)
+        # From the forward: Y_unf = W_flat * X_unf
+        # So the gradient w.r.t. the weights is: ∂L/∂W_flat = ∂L/∂Y_unf @ X_unf.t()
+        if ctx.needs_input_grad[1]:
+            # Each output channel’s gradient is a weighted sum of the input patches that contributed to it.
+            grad_weight = grad_output_reshaped @ input_unf.transpose(1, 2)
+            # We have one such gradient per sample in the batch, so we sum over the batch dimension:
+            grad_weight = grad_weight.sum(0)
+            # Finally, reshape back to the original kernel shape
+            grad_weight = grad_weight.view(C_out, C_in, K, K) # (C_out, C_in, K, K) is same as weight
+
         ########################################################################
         # compute the gradients w.r.t. input and params
 
+        # Compute gradient w.r.t. bias (∂L/∂b)
         if bias is not None and ctx.needs_input_grad[2]:
-            # compute the gradients w.r.t. bias (if any)
             grad_bias = grad_output.sum((0, 2, 3))
 
         return grad_input, grad_weight, grad_bias, None, None
@@ -227,49 +295,88 @@ class SimpleNet(nn.Module):
         x = self.fc(x)
         return x
 
-
-# create a CustomNet class here for the training and design of you CNN
 class CustomNet(nn.Module):
+    # a custom CNN for image classifcation
     def __init__(self, conv_op=nn.Conv2d, num_classes=100):
         super(CustomNet, self).__init__()
-        
-        # Initial convolution block
-        self.conv1 = conv_op(3, 64, kernel_size=7, stride=2, padding=3)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        
-        # Residual Block 1
-        self.conv2_1 = conv_op(64, 64, kernel_size=1, stride=1, padding=0)
-        self.bn2_1 = nn.BatchNorm2d(64)
-        self.conv2_2 = conv_op(64, 64, kernel_size=3, stride=1, padding=1)
-        self.bn2_2 = nn.BatchNorm2d(64)
-        self.conv2_3 = conv_op(64, 256, kernel_size=1, stride=1, padding=0)
-        self.bn2_3 = nn.BatchNorm2d(256)
-        
-        # Shortcut for residual block 1
-        self.shortcut1 = nn.Sequential(
-            conv_op(64, 256, kernel_size=1, stride=1, padding=0),
-            nn.BatchNorm2d(256)
+        # you can start from here and create a better model
+        self.features = nn.Sequential(
+
+            # BLOCK1: 2 Conv with Skip - Conv Kernel 7x7
+            # Skip Connection 
+            SkipBlock(3, 64, kernel_size=7, padding=3),
+
+            # max pooling 1/2
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            # BLOCK 2: 2 Conv with Skip - Conv Kernel 3x3
+            SkipBlock(64, 256, kernel_size=3, padding=1),
+
+            # max pooling 1/2
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            # BLOCK 3: 2 Conv with Skip - Conv Kernel 3x3
+            SkipBlock(256, 512, kernel_size=3, padding=1),  
         )
-        
-        self.maxpool2 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        
-        # Residual Block 2
-        self.conv3_1 = conv_op(256, 128, kernel_size=1, stride=1, padding=0)
-        self.bn3_1 = nn.BatchNorm2d(128)
-        self.conv3_2 = conv_op(128, 128, kernel_size=3, stride=1, padding=1)
-        self.bn3_2 = nn.BatchNorm2d(128)
-        self.conv3_3 = conv_op(128, 512, kernel_size=1, stride=1, padding=0)
-        self.bn3_3 = nn.BatchNorm2d(512)
-        
-        # Shortcut for residual block 2
-        self.shortcut2 = nn.Sequential(
-            conv_op(256, 512, kernel_size=1, stride=1, padding=0),
-            nn.BatchNorm2d(512)
+
+        # global avg pooling + FC
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+
+    def reset_parameters(self):
+        # init all params
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_out", nonlinearity="relu"
+                )
+                if m.bias is not None:
+                    nn.init.consintat_(m.bias, 0.0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, x):
+        # you can implement adversarial training here
+        # if self.training:
+        #   # generate adversarial sample based on x
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x
+    
+class CustomNet2(nn.Module):
+    # a custom CNN for image classifcation
+    def __init__(self, conv_op=nn.Conv2d, num_classes=100):
+        super(CustomNet2, self).__init__()
+        # you can start from here and create a better model
+        self.features = nn.Sequential(
+
+            # BLOCK1: Start with large conv Kernel 7x7 to get general features
+            conv_op(3, 64, kernel_size=7, stride=2, padding=3),
+            nn.ReLU(inplace=True),
+            # max pooling 1/2
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            # BLOCK2: 2x 2 Conv with Skip - Conv Kernel 3x3
+            SkipBlock(64, 64, kernel_size=3, padding=1),
+            SkipBlock(64,64, kernel_size=3, padding=1),
+
+            # max pooling 1/2
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            # BLOCK 3: 2 Conv with Skip - Conv Kernel 3x3
+            SkipBlock(64, 256, kernel_size=3, padding=1),
+
+            # max pooling 1/2
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            # BLOCK 4: 2 Conv with Skip - Conv Kernel 3x3
+            SkipBlock(256, 512, kernel_size=3, padding=1),  
         )
-        
-        # Global average pooling + FC
+
+        # global avg pooling + FC
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512, num_classes)
 
@@ -284,55 +391,41 @@ class CustomNet(nn.Module):
                 nn.init.constant_(m.bias, 0.0)
 
     def forward(self, x):
-        # Initial convolution
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-        
-        # Residual Block 1
-        identity = x
-        out = self.conv2_1(x)
-        out = self.bn2_1(out)
-        out = self.relu(out)
-        out = self.conv2_2(out)
-        out = self.bn2_2(out)
-        out = self.relu(out)
-        out = self.conv2_3(out)
-        out = self.bn2_3(out)
-        
-        # Skip connection
-        identity = self.shortcut1(identity)
-        out += identity
-        out = self.relu(out)
-        
-        out = self.maxpool2(out)
-        
-        # Residual Block 2
-        identity = out
-        out = self.conv3_1(out)
-        out = self.bn3_1(out)
-        out = self.relu(out)
-        out = self.conv3_2(out)
-        out = self.bn3_2(out)
-        out = self.relu(out)
-        out = self.conv3_3(out)
-        out = self.bn3_3(out)
-        
-        # Skip connection
-        identity = self.shortcut2(identity)
-        out += identity
-        out = self.relu(out)
-        
-        # Global average pooling + FC
-        out = self.avgpool(out)
-        out = out.view(out.size(0), -1)
-        out = self.fc(out)
-        
-        return out
+        # you can implement adversarial training here
+        # if self.training:
+        #   # generate adversarial sample based on x
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x
 
-# default model that will get picked up in main.py file for training and eval
-default_cnn_model = SimpleNet
+class  SkipBlock(nn.Module):
+    def __init__(self, in_size , out_size, kernel_size, padding):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(in_size, out_size, kernel_size=kernel_size, stride=1, padding=padding)
+        
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_size, out_size, kernel_size=kernel_size, stride=1, padding=padding)
+
+        if (in_size == out_size):
+            self.skip = nn.Identity() 
+        else:
+            self.skip = nn.Conv2d(in_size, out_size, kernel_size=1, stride=1, padding=0)
+
+    def forward(self, x):
+
+        out = self.conv1(x)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out += self.skip(x)
+        out = self.relu(out)
+        return out 
+
+
+# change this to your model!
+default_cnn_model = CustomNet2
 
 
 ################################################################################
