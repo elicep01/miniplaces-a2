@@ -1,0 +1,9 @@
+
+# ===== HW2 extras =====
+models/
+*.pth
+*.pth.tar
+*.pt
+*.ckpt
+# local caches
+__pycache__/
