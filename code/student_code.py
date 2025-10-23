@@ -459,29 +459,41 @@ class Attention(nn.Module):
         Args:
             x (tensor): input features with shape of (B, H, W, C)
         """
-        B, H, W, C = x.shape
-        N = H * W
+       # input size (B, H, W, C)
+        B, H, W, _ = x.shape
+        # qkv with shape (3, B, nHead, H * W, C)
+        qkv = (
+            self.qkv(x).reshape(
+                B, H * W, 3, self.num_heads, -1
+            ).permute(2, 0, 3, 1, 4)
+        )
+        # q, k, v with shape (B * nHead, H * W, C)
+        q, k, v = qkv.reshape(3, B * self.num_heads, H * W, -1).unbind(0)
+        ########################################################################
+        # Fill in the code here
         
-        # Flatten spatial dimensions: (B, H, W, C) -> (B, N, C)
-        x_flat = x.reshape(B, N, C)
+        # Transpose k for matrix multiplication: (B*nHead, C, H*W)
+        k_t = k.transpose(-2, -1)
         
-        # Generate Q, K, V
-        qkv = self.qkv(x_flat).reshape(B, N, 3, self.num_heads, C // self.num_heads)
-        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, num_heads, N, head_dim)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        # Compute attention scores: (B*nHead, H*W, H*W)
+        attn = (q @ k_t) * self.scale
         
-        # Attention
-        attn = (q @ k.transpose(-2, -1)) * self.scale
+        # Apply softmax to get attention weights
         attn = attn.softmax(dim=-1)
         
-        # Apply attention to values
-        x_attn = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        # Apply attention to values: (B*nHead, H*W, C)
+        x = attn @ v
         
-        # Project and reshape back
-        x_out = self.proj(x_attn)
-        x_out = x_out.reshape(B, H, W, C)
+        # Reshape back: (B, num_heads, H*W, C) -> (B, H*W, num_heads, C)
+        x = x.reshape(B, self.num_heads, H * W, -1).transpose(1, 2)
         
-        return x_out
+        # Concatenate heads: (B, H*W, num_heads*C) -> (B, H, W, dim)
+        x = x.reshape(B, H, W, -1)
+        
+        # Final projection
+        x = self.proj(x)
+        ########################################################################
+        return x
 
 
 class TransformerBlock(nn.Module):
@@ -565,20 +577,20 @@ class SimpleViT(nn.Module):
     def __init__(
         self,
         img_size=128,
+        num_classes=100,
         patch_size=16,
         in_chans=3,
-        embed_dim=768,
-        depth=12,
-        num_heads=12,
+        embed_dim=192,
+        depth=4,
+        num_heads=4,
         mlp_ratio=4.0,
         qkv_bias=True,
-        drop_path_rate=0.0,
+        drop_path_rate=0.1,
         norm_layer=nn.LayerNorm,
         act_layer=nn.GELU,
         use_abs_pos=True,
-        window_size=0,
-        window_block_indexes=[],
-        num_classes=100,
+        window_size=4,
+        window_block_indexes=(0, 2),
     ):
         """
         Args:
