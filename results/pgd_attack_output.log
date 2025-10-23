@@ -1,0 +1,17 @@
+/home/kejohnson32/miniconda3/envs/hw2/lib/python3.10/site-packages/torch/utils/data/dataloader.py:624: UserWarning: This DataLoader will create 4 worker processes in total. Our suggested max number of worker in current system is 2, which is smaller than what this DataLoader is going to create. Please be aware that excessive worker creation might get DataLoader running slow or even freeze, lower the worker number to avoid potential slowness/freeze if necessary.
+  warnings.warn(
+Use GPU: 0
+=> loading checkpoint '../logs/simple_cnn_trained/models/model_best.pth.tar'
+=> loaded checkpoint '../logs/simple_cnn_trained/models/model_best.pth.tar' (epoch 59, acc1 43.82)
+Generating adversarial samples for the model ..
+Test: [0/100]	Time 2.289 (2.289)	Acc@1 16.00 (16.00)	Acc@5 38.00 (38.00)
+Test: [10/100]	Time 0.378 (0.764)	Acc@1 18.00 (16.64)	Acc@5 46.00 (42.55)
+Test: [20/100]	Time 0.379 (0.689)	Acc@1 11.00 (15.14)	Acc@5 36.00 (41.76)
+Test: [30/100]	Time 0.381 (0.661)	Acc@1 15.00 (14.71)	Acc@5 39.00 (41.29)
+Test: [40/100]	Time 0.381 (0.650)	Acc@1 18.00 (14.95)	Acc@5 41.00 (41.68)
+Test: [50/100]	Time 0.383 (0.643)	Acc@1 11.00 (15.02)	Acc@5 39.00 (41.69)
+Test: [60/100]	Time 0.386 (0.637)	Acc@1 21.00 (14.77)	Acc@5 46.00 (41.23)
+Test: [70/100]	Time 0.385 (0.637)	Acc@1 20.00 (14.93)	Acc@5 38.00 (41.00)
+Test: [80/100]	Time 0.385 (0.634)	Acc@1 15.00 (15.15)	Acc@5 43.00 (41.36)
+Test: [90/100]	Time 0.386 (0.632)	Acc@1 16.00 (15.03)	Acc@5 42.00 (41.25)
+******Acc@1 14.890 Acc@5 40.990
